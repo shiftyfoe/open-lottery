@@ -30,6 +30,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Pull latest data before scraping
+        run: git pull --ff-only origin main || git pull --rebase origin main
+
       - name: Clear data for full backfill
         if: ${{ github.event.inputs.full_backfill == 'true' }}
         run: |
