@@ -196,6 +196,10 @@
     .hm-num { font-size: 13px; }
     .hm-cnt { font-size: 9px; font-weight: 400; opacity: .8; margin-top: 1px; }
 
+    @media (max-width: 400px) {
+      .heatmap { grid-template-columns: repeat(5, 1fr); }
+    }
+
     /* History table */
     .table-controls {
       display: flex;
@@ -246,7 +250,7 @@
 
     td {
       padding: 7px 12px;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
 
@@ -254,6 +258,7 @@
     tr:hover td { background: var(--surface2); }
 
     .td-draw { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .td-date { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .td-num {
       display: inline-block;
       width: 26px; height: 26px;
@@ -307,6 +312,9 @@
       margin-left: auto;
     }
 
+    #dashboard { display: grid; gap: 20px; }
+    #dashboard.hidden { display: none; }
+
     #loading {
       text-align: center;
       padding: 60px;
@@ -334,7 +342,7 @@
   <main>
     <div id="error-msg"></div>
     <div id="loading">Loading draw data…</div>
-    <div id="dashboard" style="display:none; display:grid; gap:20px;">
+    <div id="dashboard" class="hidden">
 
       <!-- Stats row -->
       <div class="stats-grid">
@@ -362,6 +370,7 @@
         <div class="latest-draw">
           <div class="draw-meta">
             <strong id="latest-draw-num">Draw #–</strong>
+            <span id="latest-draw-date"></span>
           </div>
           <div class="balls-row" id="latest-balls"></div>
         </div>
@@ -385,6 +394,7 @@
             <thead>
               <tr>
                 <th data-col="draw_number" title="Click to sort">Draw ↕</th>
+                <th data-col="draw_date" title="Click to sort">Date ↕</th>
                 <th>Numbers</th>
                 <th>Additional</th>
               </tr>
@@ -440,7 +450,13 @@
       const r = Math.round(30 + t * 200);
       const g = Math.round(100 - t * 60);
       const b = Math.round(200 - t * 150);
-      return `rgb(${r},${g},${b})`;
+      return { bg: `rgb(${r},${g},${b})`, r, g, b };
+    }
+
+    function textColorFor(r, g, b) {
+      // relative luminance (sRGB)
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      return luma > 140 ? '#0f172a' : '#ffffff';
     }
 
     function renderHeatmap(freq) {
@@ -453,7 +469,9 @@
         const cell = document.createElement('div');
         cell.className = 'hm-cell';
         cell.title = `Ball ${n}: drawn ${freq[n]} times`;
-        cell.style.background = heatColor(freq[n], min, max);
+        const { bg, r, g, b } = heatColor(freq[n], min, max);
+        cell.style.background = bg;
+        cell.style.color = textColorFor(r, g, b);
         cell.innerHTML = `<span class="hm-num">${n}</span><span class="hm-cnt">${freq[n]}</span>`;
         wrap.appendChild(cell);
       }
@@ -461,6 +479,8 @@
 
     function renderLatest(row) {
       document.getElementById('latest-draw-num').textContent = `Draw #${row.draw_number}`;
+      const dateEl = document.getElementById('latest-draw-date');
+      if (dateEl) dateEl.textContent = formatDate(row.draw_date);
       const container = document.getElementById('latest-balls');
       container.innerHTML = '';
 
@@ -490,6 +510,14 @@
       return val ? `<span class="${cls}">${val}</span>` : '';
     }
 
+    function formatDate(dateStr) {
+      if (!dateStr) return '–';
+      // CSV dates are YYYY-MM-DD
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isNaN(d)) return dateStr;
+      return d.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
     function renderTable() {
       const start = (currentPage - 1) * PAGE_SIZE;
       const slice = filteredRows.slice(start, start + PAGE_SIZE);
@@ -498,6 +526,7 @@
       tbody.innerHTML = slice.map(r => `
         <tr>
           <td class="td-draw">${r.draw_number}</td>
+          <td class="td-date">${formatDate(r.draw_date)}</td>
           <td>
             ${['n1','n2','n3','n4','n5','n6'].map(k => ballHtml(r[k], 'td-num')).join('')}
           </td>
@@ -546,6 +575,7 @@
       } else {
         filteredRows = allRows.filter(r => {
           if (r.draw_number.includes(q)) return true;
+          if (r.draw_date && r.draw_date.includes(q)) return true;
           const nums = [r.n1,r.n2,r.n3,r.n4,r.n5,r.n6,r.additional].filter(Boolean);
           return nums.some(n => n === q || n.padStart(2,'0') === q);
         });
@@ -585,7 +615,7 @@
           'Updated ' + new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
 
         document.getElementById('loading').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'grid';
+        document.getElementById('dashboard').classList.remove('hidden');
       } catch (err) {
         document.getElementById('loading').style.display = 'none';
         const errEl = document.getElementById('error-msg');
@@ -596,11 +626,30 @@
 
     document.getElementById('search').addEventListener('input', applyFilter);
 
-    document.querySelector('th[data-col="draw_number"]').addEventListener('click', function() {
-      sortDir *= -1;
-      allRows.sort((a, b) => sortDir * (parseInt(a.draw_number) - parseInt(b.draw_number)));
-      this.textContent = `Draw ${sortDir === -1 ? '↓' : '↑'}`;
-      applyFilter();
+    let sortCol = 'draw_number';
+    document.querySelectorAll('th[data-col]').forEach(th => {
+      th.addEventListener('click', function() {
+        const col = this.dataset.col;
+        if (sortCol === col) {
+          sortDir *= -1;
+        } else {
+          sortCol = col;
+          sortDir = -1;
+        }
+        allRows.sort((a, b) => {
+          const av = a[col] || '', bv = b[col] || '';
+          if (col === 'draw_number') return sortDir * (parseInt(av) - parseInt(bv));
+          return sortDir * av.localeCompare(bv);
+        });
+        // Reset all header labels
+        document.querySelectorAll('th[data-col]').forEach(h => {
+          const c = h.dataset.col;
+          const label = c === 'draw_number' ? 'Draw' : 'Date';
+          h.textContent = `${label} ↕`;
+        });
+        this.textContent = `${col === 'draw_number' ? 'Draw' : 'Date'} ${sortDir === -1 ? '↓' : '↑'}`;
+        applyFilter();
+      });
     });
 
     init();
