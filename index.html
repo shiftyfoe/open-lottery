@@ -331,6 +331,101 @@
       color: var(--red);
       margin-bottom: 16px;
     }
+
+    /* Analytics grid — 2-column responsive layout */
+    .analytics-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+    .analytics-grid > .card { min-width: 0; }
+    @media (max-width: 700px) {
+      .analytics-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Canvas charts */
+    .chart-canvas { width: 100%; display: block; }
+
+    /* Horizontal bar rows */
+    .chart-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-size: 12px;
+    }
+    .chart-row .label { width: 22px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .chart-row .bar-track { flex: 1; height: 16px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+    .chart-row .bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+    .chart-row .val { width: 36px; text-align: right; color: var(--muted); font-size: 11px; }
+
+    /* Gap analysis */
+    .gap-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+      font-size: 12px;
+    }
+    .gap-row .num { width: 22px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .gap-row .gap-track { flex: 1; height: 14px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+    .gap-row .gap-fill { height: 100%; border-radius: 3px; }
+    .gap-row .gap-val { width: 60px; text-align: right; color: var(--muted); font-size: 11px; }
+
+    /* Decade heatmap */
+    .decade-scroll { overflow-x: auto; padding-bottom: 6px; }
+    .decade-grid {
+      display: grid;
+      grid-template-columns: 70px repeat(49, 1fr);
+      gap: 1px;
+      min-width: 500px;
+    }
+    .decade-label {
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      padding-right: 6px;
+      white-space: nowrap;
+    }
+    .decade-cell { aspect-ratio: 1; border-radius: 2px; min-width: 8px; }
+
+    /* Sum histogram */
+    .hist-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 1px;
+      height: 100px;
+      padding-top: 8px;
+    }
+    .hist-bar {
+      flex: 1;
+      background: var(--accent);
+      border-radius: 2px 2px 0 0;
+      min-width: 3px;
+      transition: background .2s;
+    }
+    .hist-bar:hover { background: #7dd3fc; }
+    .hist-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .hist-mean {
+      position: relative;
+      font-size: 10px;
+      color: var(--yellow);
+      margin-top: 6px;
+      text-align: center;
+    }
+
+    /* Donut chart */
+    .donut-wrap { display: flex; align-items: center; gap: 20px; justify-content: center; flex-wrap: wrap; }
+    .donut-legend { font-size: 13px; }
+    .donut-legend div { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .donut-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -380,6 +475,54 @@
       <div class="card">
         <div class="card-title">Number Frequency (1–49)</div>
         <div class="heatmap" id="heatmap"></div>
+      </div>
+
+      <!-- Analytics section -->
+      <div class="analytics-grid">
+
+        <!-- Frequency bar chart -->
+        <div class="card">
+          <div class="card-title">Frequency Bar Chart</div>
+          <canvas id="freq-chart" class="chart-canvas" height="200"></canvas>
+        </div>
+
+        <!-- Odd/Even donut -->
+        <div class="card">
+          <div class="card-title">Odd / Even Split (all draws)</div>
+          <div class="donut-wrap">
+            <canvas id="oddeven-chart" width="160" height="160"></canvas>
+            <div class="donut-legend" id="oddeven-legend"></div>
+          </div>
+        </div>
+
+        <!-- Range distribution -->
+        <div class="card">
+          <div class="card-title">Number Range Distribution</div>
+          <div id="range-dist"></div>
+        </div>
+
+        <!-- Sum histogram -->
+        <div class="card">
+          <div class="card-title">Draw Sum Distribution (n1+n2+…+n6)</div>
+          <div class="hist-bars" id="sum-hist"></div>
+          <div class="hist-labels" id="sum-labels"></div>
+          <div class="hist-mean" id="sum-mean"></div>
+        </div>
+
+        <!-- Gap analysis -->
+        <div class="card">
+          <div class="card-title">Overdue Numbers (draws since last seen)</div>
+          <div id="gap-analysis"></div>
+        </div>
+
+        <!-- Decade heatmap -->
+        <div class="card" style="grid-column: 1 / -1;">
+          <div class="card-title">Number Popularity Over Time (by block of 100 draws)</div>
+          <div class="decade-scroll">
+            <div class="decade-grid" id="decade-heatmap"></div>
+          </div>
+        </div>
+
       </div>
 
       <!-- History table -->
@@ -584,6 +727,248 @@
       renderTable();
     }
 
+    /* ── Analytics functions ── */
+
+    function mainNums(row) {
+      return ['n1','n2','n3','n4','n5','n6'].map(k => parseInt(row[k])).filter(n => n >= 1 && n <= 49);
+    }
+
+    // Frequency bar chart on canvas
+    function renderFreqChart(freq) {
+      const canvas = document.getElementById('freq-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth;
+      const h = 200;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      ctx.scale(dpr, dpr);
+
+      const vals = Object.values(freq);
+      const max = Math.max(...vals);
+      const min = Math.min(...vals);
+      const barW = (w - 40) / 49;
+      const chartH = h - 30;
+
+      // Axes
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(35, 5);
+      ctx.lineTo(35, chartH + 5);
+      ctx.lineTo(w, chartH + 5);
+      ctx.stroke();
+
+      // Y-axis labels
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(max, 32, 12);
+      ctx.fillText(Math.round(max / 2), 32, chartH / 2 + 5);
+      ctx.fillText('0', 32, chartH + 5);
+
+      // Bars
+      for (let n = 1; n <= 49; n++) {
+        const t = (freq[n] - min) / (max - min || 1);
+        const r = Math.round(30 + t * 200);
+        const g = Math.round(100 - t * 60);
+        const b = Math.round(200 - t * 150);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        const barH = (freq[n] / max) * chartH;
+        const x = 36 + (n - 1) * barW;
+        ctx.fillRect(x, chartH - barH + 5, barW - 1, barH);
+      }
+
+      // X-axis labels (every 5)
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      for (let n = 1; n <= 49; n += 5) {
+        ctx.fillText(n, 36 + (n - 1) * barW + barW / 2, h - 2);
+      }
+    }
+
+    // Odd/Even donut chart
+    function renderOddEven(rows) {
+      let odd = 0, even = 0;
+      rows.forEach(r => {
+        mainNums(r).forEach(n => { if (n % 2 === 0) even++; else odd++; });
+      });
+      const total = odd + even;
+      const canvas = document.getElementById('oddeven-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = 160 * dpr;
+      canvas.height = 160 * dpr;
+      ctx.scale(dpr, dpr);
+
+      const cx = 80, cy = 80, outerR = 70, innerR = 42;
+      const slices = [
+        { val: odd, color: '#38bdf8', label: 'Odd' },
+        { val: even, color: '#a78bfa', label: 'Even' }
+      ];
+      let startAngle = -Math.PI / 2;
+      slices.forEach(s => {
+        const sweep = (s.val / total) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, outerR, startAngle, startAngle + sweep);
+        ctx.arc(cx, cy, innerR, startAngle + sweep, startAngle, true);
+        ctx.closePath();
+        ctx.fillStyle = s.color;
+        ctx.fill();
+        startAngle += sweep;
+      });
+
+      // Center text
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${Math.round(odd / total * 100)}%`, cx, cy - 8);
+      ctx.font = '11px sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('odd', cx, cy + 10);
+
+      // Legend
+      const legend = document.getElementById('oddeven-legend');
+      if (legend) {
+        legend.innerHTML = slices.map(s =>
+          `<div><span class="donut-swatch" style="background:${s.color}"></span>${s.label}: ${s.val} (${Math.round(s.val / total * 100)}%)</div>`
+        ).join('') + `<div style="color:var(--muted);font-size:11px;margin-top:4px">Avg per draw: ${(odd / rows.length).toFixed(1)} odd / ${(even / rows.length).toFixed(1)} even</div>`;
+      }
+    }
+
+    // Range distribution (1-10, 11-20, 21-30, 31-40, 41-49)
+    function renderRangeDist(rows) {
+      const ranges = [
+        { label: '1–10', min: 1, max: 10 },
+        { label: '11–20', min: 11, max: 20 },
+        { label: '21–30', min: 21, max: 30 },
+        { label: '31–40', min: 31, max: 40 },
+        { label: '41–49', min: 41, max: 49 }
+      ];
+      const counts = ranges.map(() => 0);
+      rows.forEach(r => {
+        mainNums(r).forEach(n => {
+          for (let i = 0; i < ranges.length; i++) {
+            if (n >= ranges[i].min && n <= ranges[i].max) { counts[i]++; break; }
+          }
+        });
+      });
+      const max = Math.max(...counts);
+      const colors = ['#38bdf8', '#4ade80', '#fbbf24', '#a78bfa', '#f87171'];
+      const container = document.getElementById('range-dist');
+      if (!container) return;
+      container.innerHTML = ranges.map((r, i) => `
+        <div class="chart-row">
+          <span class="label">${r.label}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${(counts[i] / max * 100).toFixed(1)}%;background:${colors[i]}"></div></div>
+          <span class="val">${counts[i]}</span>
+        </div>
+      `).join('');
+    }
+
+    // Sum distribution histogram
+    function renderSumHist(rows) {
+      const sums = rows.map(r => mainNums(r).reduce((a, b) => a + b, 0)).filter(s => s > 0);
+      if (!sums.length) return;
+      const min = Math.min(...sums);
+      const max = Math.max(...sums);
+      const bins = {};
+      for (let s = min; s <= max; s++) bins[s] = 0;
+      sums.forEach(s => bins[s]++);
+      const binMax = Math.max(...Object.values(bins));
+      const mean = (sums.reduce((a, b) => a + b, 0) / sums.length).toFixed(1);
+
+      const container = document.getElementById('sum-hist');
+      const labelsEl = document.getElementById('sum-labels');
+      const meanEl = document.getElementById('sum-mean');
+      if (!container) return;
+
+      container.innerHTML = Object.entries(bins).map(([sum, count]) =>
+        `<div class="hist-bar" style="height:${(count / binMax * 100).toFixed(1)}%" title="Sum ${sum}: ${count} draws"></div>`
+      ).join('');
+      if (labelsEl) labelsEl.innerHTML = `<span>${min}</span><span>${Math.round((min + max) / 2)}</span><span>${max}</span>`;
+      if (meanEl) meanEl.textContent = `Mean sum: ${mean}`;
+    }
+
+    // Gap analysis — "overdue" numbers
+    function renderGapAnalysis(rows) {
+      const gaps = {};
+      for (let n = 1; n <= 49; n++) gaps[n] = rows.length;
+      // rows are sorted newest-first
+      for (let i = 0; i < rows.length; i++) {
+        mainNums(rows[i]).forEach(n => {
+          if (gaps[n] === rows.length) gaps[n] = i;
+        });
+      }
+
+      // Sort by gap descending
+      const sorted = Object.entries(gaps)
+        .map(([n, g]) => ({ num: parseInt(n), gap: g }))
+        .sort((a, b) => b.gap - a.gap);
+
+      const maxGap = sorted[0].gap || 1;
+      const container = document.getElementById('gap-analysis');
+      if (!container) return;
+
+      container.innerHTML = sorted.map(({ num, gap }) => {
+        const t = gap / maxGap;
+        const r = Math.round(74 + t * 181);  // green→red
+        const g = Math.round(222 - t * 212);
+        const b = Math.round(128 - t * 56);
+        const color = `rgb(${r},${g},${b})`;
+        const label = gap === rows.length ? 'Never' : `${gap} draw${gap !== 1 ? 's' : ''}`;
+        return `<div class="gap-row">
+          <span class="num" style="color:${color}">${num}</span>
+          <div class="gap-track"><div class="gap-fill" style="width:${(t * 100).toFixed(1)}%;background:${color}"></div></div>
+          <span class="gap-val">${label}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // Decade heatmap — number frequency per block of 100 draws
+    function renderDecadeHeatmap(rows) {
+      const blockSize = 100;
+      const blocks = [];
+      for (let i = 0; i < rows.length; i += blockSize) {
+        blocks.push(rows.slice(i, i + blockSize));
+      }
+
+      // Compute global min/max for color scaling
+      const allCounts = [];
+      blocks.forEach(block => {
+        const f = buildFrequency(block);
+        Object.values(f).forEach(c => allCounts.push(c));
+      });
+      const gMin = Math.min(...allCounts);
+      const gMax = Math.max(...allCounts);
+
+      const container = document.getElementById('decade-heatmap');
+      if (!container) return;
+
+      // Header row
+      let html = '<div class="decade-label" style="font-weight:600;font-size:10px">#</div>';
+      for (let n = 1; n <= 49; n++) {
+        html += `<div style="font-size:8px;color:var(--muted);text-align:center">${n}</div>`;
+      }
+
+      blocks.forEach(block => {
+        const startDraw = parseInt(block[0].draw_number);
+        const endDraw = parseInt(block[block.length - 1].draw_number);
+        const freq = buildFrequency(block);
+        html += `<div class="decade-label">${startDraw}–${endDraw}</div>`;
+        for (let n = 1; n <= 49; n++) {
+          const { bg } = heatColor(freq[n], gMin, gMax);
+          html += `<div class="decade-cell" style="background:${bg}" title="${n}: ${freq[n]} in draws ${startDraw}–${endDraw}"></div>`;
+        }
+      });
+
+      container.innerHTML = html;
+    }
+
     async function init() {
       try {
         const text = await loadData();
@@ -609,6 +994,14 @@
         renderLatest(latest);
         renderHeatmap(freq);
         renderTable();
+
+        // Analytics
+        renderFreqChart(freq);
+        renderOddEven(rows);
+        renderRangeDist(rows);
+        renderSumHist(rows);
+        renderGapAnalysis(allRows);
+        renderDecadeHeatmap(rows);
 
         // Updated timestamp
         document.getElementById('last-updated').textContent =
